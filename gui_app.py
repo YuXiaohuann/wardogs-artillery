@@ -36,7 +36,7 @@ import artillery_tool as core
 
 # 版本号单一事实源: 窗口标题 / UI 副标题 / 单实例弹框都从这里取,
 # 免得三处各写各的 (用户截图里就出现过"标题 v1.6.6 / 副标题 v1.1"这种不一致)。
-APP_VER = "v1.7.0"
+APP_VER = "v1.6.11"
 
 # 必须在 tk.Tk() 之前: 让进程从第一行起就是 DPI 感知, 与 mss 截屏 /
 # GetPhysicalCursorPos 同处物理像素坐标系。否则 mss 会在后台轮询线程里
