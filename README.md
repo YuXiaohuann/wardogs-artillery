@@ -1,5 +1,7 @@
 # WARDOGS 炮兵助手
 
+<img src="docs/img/icon.png" alt="WARDOGS 炮兵助手 图标" width="72" align="right">
+
 《WARDOGS》(Steam) 的炮兵计算助手：鼠标点两下就读出**目标**和**炮位**坐标，自动算出
 **距离 / 方位 / 仰角**，结果挂在游戏画面上方的悬浮小窗里边打边看；开炮前的方向键连按 (QTE)
 也可以交给它自动完成。Windows 10 / 11，单文件 exe，打开就能用。
