@@ -34,7 +34,7 @@
   "hover_static_skip": true,
   "qte_row_stable_ms": 110,
   "qte_press_margin": 0.1,
-  "qte_min_gap_ms": 100,
+  "qte_min_gap_ms": 70,
   "qte_red_probe_ms": 250,
   "qte_red_poll_ms": 8,
   "qte_red_hold_ms": 250,
@@ -57,8 +57,9 @@
   "qte_stuck_max": 2,
   "qte_ghost_ms": 1500,
   "hud_on": false,
-  "cfg_ver": 166,
+  "cfg_ver": 167,
   "qte_adapt": true,
   "qte_adapt_probe_ms": 400,
-  "qte_adapt_methods": ""
+  "qte_adapt_methods": "",
+  "qte_consume_fast": true
 }

@@ -110,7 +110,8 @@ DEFAULT_CONFIG = {
     "qte_press_margin": 0.10,
     # 两次实际 keydown 之间的最小间隔: 闭环靠画面推进, 低延迟屏/低显示滞后时
     # 消耗反馈可能来得很早, 连发太密会让游戏输入状态机串键 -> 整行重来。
-    "qte_min_gap_ms": 100,
+    "qte_min_gap_ms": 70,          # v1.6.11: 100->70 (配合消耗跃迁免稳定窗)
+    "qte_consume_fast": True,      # v1.6.11: 消耗跃迁(画面正好缩掉刚按那支)免稳定窗
     # 空闲时红箭探针的周期 (只在灰度通道抓空时跑; 探针自带 stride-4 存在性闸,
     # 画面无红 ~0.2ms/次 = 4Hz 约 0.1% 单核; 有红才付 ~5ms/0.7MP 的全分辨率连通域)。
     "qte_red_probe_ms": 250,
@@ -1578,7 +1579,7 @@ def azimuth_deg(gx, gy, tx, ty):
 # 用户"升级了却没变好"。所以给配置打版本号 CFG_VER: 盘上版本落后时, 把
 # MIGRATE_KEYS (全部 QTE 调参键) 拉回 DEFAULT_CONFIG 的新基线;
 # **用户个性化键一律不动** (功能开关 / 热区 / HUD 位置 / 武器 / CPU 预算 …)。
-CFG_VER = 166
+CFG_VER = 167
 
 MIGRATE_KEYS = (
     "qte_gap_ms", "qte_hold_ms", "qte_poll_ms", "qte_fast_ms",

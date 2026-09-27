@@ -36,7 +36,7 @@ import artillery_tool as core
 
 # 版本号单一事实源: 窗口标题 / UI 副标题 / 单实例弹框都从这里取,
 # 免得三处各写各的 (用户截图里就出现过"标题 v1.6.6 / 副标题 v1.1"这种不一致)。
-APP_VER = "v1.6.10"
+APP_VER = "v1.6.11"
 
 # 必须在 tk.Tk() 之前: 让进程从第一行起就是 DPI 感知, 与 mss 截屏 /
 # GetPhysicalCursorPos 同处物理像素坐标系。否则 mss 会在后台轮询线程里
@@ -95,6 +95,8 @@ class App:
         self._qte_band, self._qte_band_base = None, None   # 紧凑轮询窗 + 学它时的全横带
         self._qte_sweep_at = 0.0                      # 下次强制全横带扫描的时刻
         self._qte_stray_full_at = 0.0                # v1.6.10: 杂散单箭触发全扫的限流点
+        self._qte_prev_dirs = None                    # v1.6.11: 上一帧读到的尾段 (消耗跃迁用)
+        self._qte_prev_dirs_t = 0.0                   # v1.6.11: 上一帧尾段的时刻
         # ---- v1.4 CPU 开销控制 ----
         self._qte_seen_at = 0.0                       # 上次真的看到箭行的时刻
         self._qte_full_at = 0.0                       # 下次强制全横带兜底扫描的时刻
@@ -1201,6 +1203,7 @@ class App:
         self._qte_conf_ts = 0.0
         self._qte_ghost, self._qte_ghost_ts, self._qte_ghost_off = None, 0.0, 0
         self._qte_stucks = 0
+        self._qte_prev_dirs, self._qte_prev_dirs_t = None, 0.0
 
     def _qte_trace(self, kind, dirs, dec):
         """v1.6.1 黑匣子: 每轮 QTE 决策写一行到 <exe 目录>/qte_trace.log。
@@ -1292,6 +1295,19 @@ class App:
             return
         self._qte_empty = 0
         dirs = [d for _x, d in seq]
+        # v1.6.11 消耗跃迁: 上一帧尾段 [h, ...] 这一帧正好变成 [...] (缩掉的恰是刚按的
+        # 那支 h) -> "游戏吃掉了键" 这一事实本身已经是逐位匹配的证据, 不必再花
+        # qte_press_stable_ms 去确认同一个候选。错读要**恰好**等于期望尾段才能骗过
+        # 这道门, 概率远低于稳定窗想挡的那类瞬态读花; 真被骗也只是早按一支,
+        # 红行否决 + 补发兜底照旧。qte_consume_fast=false 可整块关掉。
+        _now0 = time.time()
+        _prev = getattr(self, "_qte_prev_dirs", None)
+        _prev_t = getattr(self, "_qte_prev_dirs_t", 0.0)
+        self._qte_prev_dirs, self._qte_prev_dirs_t = list(dirs), _now0
+        fast = bool(self.cfg.get("qte_consume_fast", True)
+                    and _prev and dirs and _now0 - _prev_t <= 0.4
+                    and self._qte_pressed and _prev[0] == self._qte_pressed[-1]
+                    and dirs == _prev[1:])
         static = str(self.cfg.get("qte_model", "consume")).lower().startswith("static")
         # v1.6.4: 候选增长行的 TTL 作废必须在**任何早退分支之前**做。原来只在 grow
         # 分支里查, 而"画面不变"会在上面走 wait-consume 提前 return -> 候选永不过期,
@@ -1468,7 +1484,7 @@ class App:
                     i = len(P) - off
                     if 0 <= i < len(dirs):
                         self._qte_press_gated(dirs[i], len(P) + 1, len(R), kind, dirs,
-                                              via="advance")
+                                              via="advance", stable_ok=fast)
                     return
             for off in range(len(R), len(P), -1):   # 漏帧: 画面跳前进 -> 以画面对齐
                 if dirs == R[off:]:
@@ -1515,7 +1531,7 @@ class App:
                                        or len(dirs) > 1 or len(R) - len(P) == 1):
                     self._qte_trim_tail(R, soff, len(dirs), kind, dirs, now)
                     self._qte_press_gated(R[len(P)], len(P) + 1, len(R), kind, dirs,
-                                          via="slice")
+                                          via="slice", stable_ok=fast)
                     return
                 if soff >= 0:
                     self._qte_conf_ts = now
@@ -1586,7 +1602,7 @@ class App:
         # v1.6.3: 70 -> 110ms。逐键归因里另一类错键是**首键**(press:newrow)被
         # "稳定但读错"的持续读花穿透 (弹出动画半帧/爆炸亮块能稳定存在 120~300ms,
         # 旧 70+60=130ms 确认窗盖不住)。首键每行只多付 40ms, 之后每键节奏不变
-        # (仍由 qte_min_gap_ms=100 支配), 换来的是最贵的那一支键更稳。
+        # (仍由 qte_min_gap_ms=70 支配), 换来的是最贵的那一支键更稳。
         _rs = float(self.cfg.get("qte_row_stable_ms", 110)) / 1000.0
         _rsd = float(self.cfg.get("qte_row_stable_dirty_ms", 0)) / 1000.0
         if (_rsd > _rs and now - self._qte_conf_ts
@@ -1641,7 +1657,7 @@ class App:
         self._qte_trim_cand, self._qte_trim_ts = None, 0.0
         self._qte_trace(kind, dirs, "row-trim>%d" % end)
 
-    def _qte_press_gated(self, d, idx, total, kind="", dirs=(), via=""):
+    def _qte_press_gated(self, d, idx, total, kind="", dirs=(), via="", stable_ok=False):
         """按键前三道门 (v1.6.1): 回前台 settle / 置信度 margin / 候选稳定窗。
 
         - settle: 刚从 QQ/浏览器切回游戏的前 qte_fg_settle_ms 不按 —— 切窗瞬间
@@ -1670,7 +1686,7 @@ class App:
         if _dirty > stable and (now - self._qte_conf_ts
                                 < float(self.cfg.get("qte_conflict_ms", 250)) / 1000.0):
             stable = _dirty
-        if stable > 0:
+        if stable > 0 and not stable_ok:
             cand = (d, idx, total)
             if self._qte_cand != cand:
                 self._qte_cand, self._qte_cand_ts = cand, now
@@ -1680,6 +1696,8 @@ class App:
                 self._qte_trace(kind, dirs, "gate-cand-wait")
                 return False
             self._qte_cand, self._qte_cand_ts = None, 0.0
+        if stable_ok:
+            self._qte_trace(kind, dirs, "gate-fastpath")
         self._qte_press(d, idx, total)
         self._qte_trace(kind, dirs, "press:%s" % (via or "?"))
         return True
@@ -1696,7 +1714,7 @@ class App:
         # 连发太密会让游戏输入状态机串键 -> 整行重来。pre 在发送线程里补睡,
         # 不占轮询线程。
         now = time.time()
-        pre = max(0.0, float(self.cfg.get("qte_min_gap_ms", 100)) / 1000.0
+        pre = max(0.0, float(self.cfg.get("qte_min_gap_ms", 70)) / 1000.0
                   - (now - self._qte_last_key_ts))
         self._qte_last_key_ts = now + pre
         threading.Thread(target=self._qte_send_one,
@@ -1712,7 +1730,7 @@ class App:
         self._qte_acted = True
         self._qte_fast = time.time() + 0.45
         now = time.time()
-        pre = max(0.0, float(self.cfg.get("qte_min_gap_ms", 100)) / 1000.0
+        pre = max(0.0, float(self.cfg.get("qte_min_gap_ms", 70)) / 1000.0
                   - (now - self._qte_last_key_ts))
         self._qte_last_key_ts = now + pre
         threading.Thread(target=self._qte_send_one,
