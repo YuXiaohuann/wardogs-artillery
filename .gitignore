@@ -1,0 +1,19 @@
+# 构建 / 运行产物, 一律不进仓库
+__pycache__/
+*.pyc
+dist/
+build/
+*.log
+*.log.*
+debug_hover/
+*.tmp
+
+# 配置备份与旧安装包 (本地留档, 不公开)
+config.json.bak_*
+*.old_*
+*.old_v*
+*.OLD_DO_NOT_RUN
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
