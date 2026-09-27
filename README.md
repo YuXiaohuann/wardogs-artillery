@@ -4,7 +4,7 @@
 **距离 / 方位 / 仰角**，结果挂在游戏画面上方的悬浮小窗里边打边看；开炮前的方向键连按 (QTE)
 也可以交给它自动完成。Windows 10 / 11，单文件 exe，打开就能用。
 
-> 下载最新版：<https://tools.duzehao.online/#tool-wardogs-artillery>
+> 下载最新版：[GitHub Releases](https://github.com/ecokater/wardogs-artillery/releases)　|　[工具站](https://tools.duzehao.online/#tool-wardogs-artillery)（含往期版本）
 
 ![主界面](docs/img/gui_main.png)
 
