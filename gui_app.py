@@ -70,6 +70,9 @@ PRIMARY_FG = "#101317"                 # v1.7.0: 主操作上的深色字
 TOG_BG, TOG_BG_H = "#122b22", "#17382c"   # v1.7.0: 开关 ON 底/悬停
 TOG_BD, TOG_BD_H = "#1d4634", "#2b6a4b"   # v1.7.0: 开关 ON 描边/悬停
 BADGE_BG = "#2a2013"                 # v1.7.0: 射程徽章底 (琥珀 8% 感)
+TEXT3 = "#5d6675"                    # v1.7.0 规范: 最弱文字 (禁用态预留)
+BG_LOG = "#0b0e13"                   # v1.7.0 规范: 日志正文底
+DANGER_BG = "#2a1517"                # v1.7.0 规范: 错误底备用
 
 def virtual_screen():
     u = ctypes.windll.user32
@@ -149,10 +152,22 @@ class App:
         self.root = tk.Tk()
         self.root.title("WARDOGS 炮兵助手 " + APP_VER)
         try:                                  # v1.7.0 应用图标 (缺文件时静默跳过)
-            _ico = os.path.join(BASE, "app.ico")
-            if os.path.exists(_ico):
+            # 冻结后 datas 解包到 sys._MEIPASS, 不在 exe 旁路 —— 早先只查 BASE 导致
+            # 打包版静默回落到 Tk 默认羽毛图标 (用户截图抓现行)。两条路都查。
+            _ico = next((p for p in (os.path.join(getattr(sys, "_MEIPASS", BASE), "app.ico"),
+                                     os.path.join(BASE, "app.ico"))
+                         if os.path.exists(p)), None)
+            if _ico:
                 self.root.iconbitmap(_ico)
                 self.root.iconbitmap(default=_ico)
+        except Exception:
+            pass
+        try:                                  # v1.7.0 沉浸式暗色标题栏 (Win10 1809+)
+            self.root.update_idletasks()
+            _hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            if _hwnd:
+                _v = ctypes.c_int(1)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(_hwnd, 20, ctypes.byref(_v), 4)
         except Exception:
             pass
         self.root.configure(bg=BG)
@@ -161,9 +176,12 @@ class App:
         st.configure("TButton", background=PANEL, foreground=FG, borderwidth=1, focusthickness=0, padding=6)
         st.map("TButton", background=[("active", "#2a3140"), ("pressed", "#33405a")])
         st.configure("TCombobox", fieldbackground=PANEL_IN, background=PANEL, foreground=FG,
-                     arrowcolor=DIM, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
-        st.map("TCombobox", fieldbackground=[("readonly", PANEL_IN)])
-        st.map("TCombobox", foreground=[("readonly", FG)])
+                     arrowcolor=DIM, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+                     padding=(8, 4), font=("Microsoft YaHei UI", 10))
+        st.map("TCombobox", fieldbackground=[("readonly", PANEL_IN)],
+               foreground=[("readonly", FG)],
+               bordercolor=[("focus", GOLD)], lightcolor=[("focus", GOLD)],
+               darkcolor=[("focus", GOLD)], arrowcolor=[("active", FG)])
         for _k, _v in (("background", PANEL), ("foreground", FG),
                        ("selectBackground", HOVER), ("selectForeground", FG)):
             self.root.option_add("*TCombobox*Listbox." + _k, _v)
@@ -233,8 +251,10 @@ class App:
         b.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
                     highlightbackground=bd, highlightcolor=bd, highlightthickness=1)
 
-    def _mk_btn(self, parent, text, cmd, kind="ghost", font=("Microsoft YaHei UI", 9),
-                padx=10, pady=8):
+    def _mk_btn(self, parent, text, cmd, kind="ghost", font=("Microsoft YaHei UI", 10),
+                padx=12, pady=8):
+        if kind == "primary" and len(font) == 2:
+            font = (font[0], font[1], "bold")     # spec C1: 主操作加粗
         b = tk.Button(parent, text=text, command=cmd, bd=0, padx=padx, pady=pady,
                       font=font, cursor="hand2", takefocus=0)
         b._kind, b._on, b._hover = kind, False, False
@@ -248,7 +268,7 @@ class App:
         open_ = not bool(self.cfg.get("ui_log_open"))
         self.cfg["ui_log_open"] = open_
         if open_:
-            self.logw.pack(fill="both", expand=True, before=self.hint, padx=16, pady=(0, 2))
+            self.logw.pack(fill="both", expand=True, before=self.hint, padx=16, pady=(0, 4))
             self.log_btn.configure(text="▾  运行日志")
         else:
             self.logw.pack_forget()
@@ -257,15 +277,15 @@ class App:
     def _build_ui(self):
         # --- 标题
         head = tk.Frame(self.root, bg=BG)
-        head.pack(fill="x", padx=16, pady=(12, 2))
+        head.pack(fill="x", padx=16, pady=(12, 4))
         tk.Label(head, text="WARDOGS 炮兵助手", bg=BG, fg=FG, anchor="w",
-                 font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
+                 font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
         tk.Label(head, text=APP_VER + " · 鼠标取点", bg=BG, fg=DIM,
                  font=("Microsoft YaHei UI", 9)).pack(side="right")
 
         # --- 武器行 (组合框 + 射程徽章)
         top = tk.Frame(self.root, bg=BG)
-        top.pack(fill="x", padx=16, pady=(2, 0))
+        top.pack(fill="x", padx=16, pady=(4, 0))
         tk.Label(top, text="武器", bg=BG, fg=DIM,
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.weapon_var = tk.StringVar(value=self.cfg.get("weapon", "SPH-2"))
@@ -281,7 +301,7 @@ class App:
                           values=names)
         cb.pack(side="left", padx=(6, 8))
         cb.bind("<<ComboboxSelected>>", lambda e: (self.save_cfg(), self._weapon_range_sync()))
-        self.wrange_lbl = tk.Label(top, text="", bg=BADGE_BG, fg=GOLD, padx=8, pady=2,
+        self.wrange_lbl = tk.Label(top, text="", bg=BADGE_BG, fg=GOLD, padx=8, pady=4,
                                    font=("Microsoft YaHei UI", 9, "bold"))
         self.wrange_lbl.pack(side="right")
 
@@ -290,22 +310,25 @@ class App:
                         highlightbackground=BORDER)
         card.pack(fill="x", padx=16, pady=(8, 4))
         self.vars = {}
-        rows = [("dist", "距离 / 方位", FG, 17), ("target", "目标坐标", GOLD, 12),
-                ("gun", "炮位坐标", GOLD, 12), ("elev", "仰角 / 弹道", FG, 12),
-                ("extra", "装填 / 射程", DIM, 11)]
-        for key, label, color, fs in rows:
+        # v1.7.0 规范 C4: 字号序列 22 -> 12 -> 11 -> 10, hero 只给距离/方位一行
+        rows = [("dist", "距离 / 方位", FG, ("Consolas", 22, "bold"), (8, 4)),
+                ("target", "目标坐标", GOLD, ("Consolas", 11, "bold"), 4),
+                ("gun", "炮位坐标", GOLD, ("Consolas", 11, "bold"), 4),
+                ("elev", "仰角 / 弹道", FG, ("Consolas", 12, "bold"), 4),
+                ("extra", "装填 / 射程", DIM, ("Microsoft YaHei UI", 10, "bold"), (4, 8))]
+        for key, label, color, fnt, py in rows:
             f = tk.Frame(card, bg=PANEL)
-            f.pack(fill="x", padx=16, pady=4)
+            f.pack(fill="x", padx=16, pady=py)
             tk.Label(f, text=label, bg=PANEL, fg=DIM, width=9, anchor="w",
                      font=("Microsoft YaHei UI", 9)).pack(side="left")
             v = tk.Label(f, text="--", bg=PANEL, fg=color, anchor="w",
-                         font=("Consolas", fs, "bold"))
+                         font=fnt)
             v.pack(side="left", padx=8)
             self.vars[key] = v
 
         # --- 按钮区: 主操作(蓝) + 三个状态开关(开=绿高亮●) + 保存(描边)
         btns = tk.Frame(self.root, bg=BG)
-        btns.pack(fill="x", padx=16, pady=4)
+        btns.pack(fill="x", padx=16, pady=(4, 4))
         spec = [("读取目标", "F1", self.do_target, "primary"),
                 ("读取炮位", "F2", self.do_gun, "primary"),
                 ("HUD", "F5", self.toggle_hud, "toggle"),
@@ -330,33 +353,35 @@ class App:
                        highlightbackground=BORDER)
         cal.pack(fill="x", padx=16, pady=(0, 4))
         row1 = tk.Frame(cal, bg=PANEL)
-        row1.pack(fill="x", padx=12, pady=(6, 2))
+        row1.pack(fill="x", padx=12, pady=(8, 4))
         tk.Label(row1, text="标定", bg=PANEL, fg=DIM,
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.cal_d = tk.StringVar(); self.cal_m = tk.StringVar()
         tk.Label(row1, text="距离", bg=PANEL, fg=DIM,
                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
-        tk.Entry(row1, textvariable=self.cal_d, width=7, bg=PANEL_IN, fg=GOLD,
+        tk.Entry(row1, textvariable=self.cal_d, width=7, bg=PANEL_IN, fg=FG,
                  insertbackground=FG, relief="flat", font=("Consolas", 10),
-                 highlightthickness=1, highlightbackground=BORDER).pack(side="left", padx=2)
+                 highlightthickness=1, highlightbackground=BORDER,
+                                   highlightcolor=GOLD).pack(side="left", padx=2)
         tk.Label(row1, text="m  密位", bg=PANEL, fg=DIM,
                  font=("Microsoft YaHei UI", 8)).pack(side="left")
-        tk.Entry(row1, textvariable=self.cal_m, width=6, bg=PANEL_IN, fg=GOLD,
+        tk.Entry(row1, textvariable=self.cal_m, width=6, bg=PANEL_IN, fg=FG,
                  insertbackground=FG, relief="flat", font=("Consolas", 10),
-                 highlightthickness=1, highlightbackground=BORDER).pack(side="left", padx=2)
+                 highlightthickness=1, highlightbackground=BORDER,
+                                   highlightcolor=GOLD).pack(side="left", padx=2)
         for txt, cmd in (("取距离", self.cal_use_dist), ("记录", self.cal_add),
                          ("清空", self.cal_clear)):
             self._mk_btn(row1, txt, cmd, "ghost",
-                         font=("Microsoft YaHei UI", 8), padx=7, pady=2).pack(side="left", padx=2)
+                         font=("Microsoft YaHei UI", 8), padx=8, pady=4).pack(side="left", padx=2)
         row2 = tk.Frame(cal, bg=PANEL)
-        row2.pack(fill="x", padx=12, pady=(0, 6))
+        row2.pack(fill="x", padx=12, pady=(0, 8))
         tk.Label(row2, text="距离修正", bg=PANEL, fg=DIM,
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.cal_off = tk.StringVar(value="0")
         self.cal_off_e = tk.Entry(row2, textvariable=self.cal_off, width=6, bg=PANEL_IN,
-                                  fg=GOLD, insertbackground=FG, relief="flat",
+                                  fg=FG, insertbackground=FG, relief="flat",
                                   font=("Consolas", 10), highlightthickness=1,
-                                  highlightbackground=BORDER)
+                                  highlightbackground=BORDER, highlightcolor=GOLD)
         self.cal_off_e.pack(side="left", padx=(6, 2))
         self.cal_off_e.bind("<Return>", lambda ev: self.cal_set_offset())
         self.cal_off_e.bind("<FocusOut>", lambda ev: self.cal_set_offset())
@@ -369,25 +394,25 @@ class App:
         # --- 可折叠日志: 收起时只留"最近事件"一行
         logbar = tk.Frame(self.root, bg=PANEL, bd=0, highlightthickness=1,
                           highlightbackground=BORDER)
-        logbar.pack(fill="x", padx=16, pady=(0, 2))
+        logbar.pack(fill="x", padx=16, pady=(0, 4))
         self.log_btn = self._mk_btn(logbar, "▸  运行日志", self._toggle_log, "ghost",
-                                    font=("Microsoft YaHei UI", 9), padx=8, pady=3)
+                                    font=("Microsoft YaHei UI", 9), padx=8, pady=4)
         self.log_btn.configure(highlightthickness=0)
         self.log_btn.pack(side="left")
         self.log_last = tk.Label(logbar, text="就绪", bg=PANEL, fg=DIM, anchor="w",
-                                 font=("Consolas", 8))
-        self.log_last.pack(side="left", fill="x", expand=True, padx=(8, 10))
-        self.logw = scrolledtext.ScrolledText(self.root, width=56, height=6, bg="#0b0e13", fg="#a8b3a8",
+                                 font=("Consolas", 9))
+        self.log_last.pack(side="left", fill="x", expand=True, padx=(8, 12))
+        self.logw = scrolledtext.ScrolledText(self.root, width=56, height=6, bg=BG_LOG, fg=DIM,
                                               insertbackground=FG, font=("Consolas", 9),
-                                              wrap="word", relief="flat",
+                                              wrap="word", relief="flat", padx=8, pady=4,
                                               highlightthickness=1, highlightbackground=BORDER)
         if self.cfg.get("ui_log_open"):
-            self.logw.pack(fill="both", expand=True, padx=16, pady=(0, 2))
+            self.logw.pack(fill="both", expand=True, padx=16, pady=(0, 4))
             self.log_btn.configure(text="▾  运行日志")
 
         self.hint = tk.Label(self.root, bg=BG, fg=DIM, anchor="w", justify="left",
                              font=("Microsoft YaHei UI", 8), text=self._hint_text())
-        self.hint.pack(fill="x", padx=18, pady=(2, 8))
+        self.hint.pack(fill="x", padx=16, pady=(4, 8))
         self._weapon_range_sync()
 
     def _weapon_range_sync(self):
@@ -1888,20 +1913,20 @@ class App:
             h.configure(bg=BG)
             h.geometry("10x10+0+0")
             big = tk.Label(h, text="-- m", bg=BG, fg=GOLD,
-                           font=("Consolas", 26, "bold"), anchor="w", padx=10)
-            big.pack(fill="x", pady=(6, 0))
+                           font=("Consolas", 28, "bold"), anchor="w", padx=12)
+            big.pack(fill="x", pady=(8, 0))
             sub = tk.Label(h, text="方位 --  仰角 --", bg=BG, fg=FG,
-                           font=("Microsoft YaHei", 10), anchor="w", padx=10)
+                           font=("Microsoft YaHei UI", 11), anchor="w", padx=12)
             sub.pack(fill="x")
             xy1 = tk.Label(h, text="目标 --", bg=BG, fg=DIM,
-                           font=("Consolas", 10), anchor="w", padx=10)
+                           font=("Consolas", 10), anchor="w", padx=12)
             xy1.pack(fill="x")
             xy2 = tk.Label(h, text="炮位 --", bg=BG, fg=DIM,
-                           font=("Consolas", 10), anchor="w", padx=10)
+                           font=("Consolas", 10), anchor="w", padx=12)
             xy2.pack(fill="x")
             tip = tk.Label(h, text="WARDOGS HUD · 按住F7拖动 · 双击关闭", bg=BG, fg=DIM,
-                           font=("Microsoft YaHei", 8), anchor="w", padx=10)
-            tip.pack(fill="x", pady=(0, 4))
+                           font=("Microsoft YaHei UI", 8), anchor="w", padx=12)
+            tip.pack(fill="x", pady=(4, 8))
             # 尺寸自适应: 按"最坏情况文案"量一次内容宽高再定窗口大小。
             # 固定 300x150 在 125% 缩放下内容实测要 317x173: 底行提示被切掉一半、
             # 横排也出窗; 字体像素尺寸随系统缩放/分辨率变化, 任何固定值都会再切。
