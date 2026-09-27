@@ -36,7 +36,7 @@ import artillery_tool as core
 
 # 版本号单一事实源: 窗口标题 / UI 副标题 / 单实例弹框都从这里取,
 # 免得三处各写各的 (用户截图里就出现过"标题 v1.6.6 / 副标题 v1.1"这种不一致)。
-APP_VER = "v1.6.11"
+APP_VER = "v1.6.12"
 
 # 必须在 tk.Tk() 之前: 让进程从第一行起就是 DPI 感知, 与 mss 截屏 /
 # GetPhysicalCursorPos 同处物理像素坐标系。否则 mss 会在后台轮询线程里
@@ -96,6 +96,8 @@ class App:
         self._qte_sweep_at = 0.0                      # 下次强制全横带扫描的时刻
         self._qte_stray_full_at = 0.0                # v1.6.10: 杂散单箭触发全扫的限流点
         self._qte_prev_dirs = None                    # v1.6.11: 上一帧读到的尾段 (消耗跃迁用)
+        self._qte_open_head = None                    # v1.6.12: 开行防抖盯的行首方向
+        self._qte_open_head_ts = 0.0                  # v1.6.12: 行首首次出现时刻
         self._qte_prev_dirs_t = 0.0                   # v1.6.11: 上一帧尾段的时刻
         # ---- v1.4 CPU 开销控制 ----
         self._qte_seen_at = 0.0                       # 上次真的看到箭行的时刻
@@ -1204,6 +1206,7 @@ class App:
         self._qte_ghost, self._qte_ghost_ts, self._qte_ghost_off = None, 0.0, 0
         self._qte_stucks = 0
         self._qte_prev_dirs, self._qte_prev_dirs_t = None, 0.0
+        self._qte_open_head, self._qte_open_head_ts = None, 0.0
 
     def _qte_trace(self, kind, dirs, dec):
         """v1.6.1 黑匣子: 每轮 QTE 决策写一行到 <exe 目录>/qte_trace.log。
@@ -1590,6 +1593,15 @@ class App:
             return
         key = tuple(dirs)
         now = time.time()
+        # v1.6.12 行首开行防抖: 行是从左往右逐支弹出的, 头几帧尾段一直在长; 而首键
+        # 只依赖**行首**那一支。旧防抖按"整行序列不变"计时, 每弹一支就重新计时,
+        # 首键要等最后一支弹完 + 110ms + 60ms。现按"行首方向不变"计时 (每帧仍要求
+        # >=2 支, 单支走 short-ignore 不进这里), 尾支弹出不再重启倒计时; 会改行首的
+        # 读花照旧重启。实测 p90 首键 248ms 里有一大块就是弹出动画重启掉的。
+        _hd = dirs[0]
+        if (_hd != getattr(self, "_qte_open_head", None)
+                or now - getattr(self, "_qte_open_head_ts", 0.0) > 1.0):
+            self._qte_open_head, self._qte_open_head_ts = _hd, now
         if not self._qte_hist or self._qte_hist[-1] != key:
             self._qte_hist, self._qte_new_ts = [key], now
             self._qte_trace(kind, dirs, "newrow-firstframe")
@@ -1608,11 +1620,25 @@ class App:
         if (_rsd > _rs and now - self._qte_conf_ts
                 < float(self.cfg.get("qte_conflict_ms", 250)) / 1000.0):
             _rs = _rsd                        # v1.6.4 脏窗: 刚打过架的行多等一会儿
-        if now - self._qte_new_ts < _rs:
+        # v1.6.12 单一开行门: 行首年龄 >= 行稳(_rs) + 候选稳(_st) 就直接开行并按首键
+        # (stable_ok=True, 不再串行再等一个候选窗)。总观察时长与 v1.6.3 以来逐位相同
+        # (110+60=170ms, 脏窗时更长), 但去掉了两段串行之间的轮询空等, 且行首时钟
+        # 不被尾支弹出重启 -> 弹出动画那段时间不再计入首键延迟。
+        _st = float(self.cfg.get("qte_press_stable_ms", 60)) / 1000.0
+        _st_d = float(self.cfg.get("qte_press_stable_dirty_ms", 0)) / 1000.0
+        if (_st_d > _st and now - self._qte_conf_ts
+                < float(self.cfg.get("qte_conflict_ms", 250)) / 1000.0):
+            _st = _st_d                        # 脏窗: 刚打过架的画面首键多确认一会儿
+        _gate = _rs + _st
+        _clk = (self._qte_open_head_ts if self.cfg.get("qte_head_open", True)
+                else self._qte_new_ts)
+        if len(self._qte_hist) < 2 or now - _clk < _gate:
             self._qte_trace(kind, dirs, "newrow-debounce")
             return
         self._qte_row = dirs
-        self._qte_press_gated(dirs[0], 1, len(dirs), kind, dirs, via="newrow")
+        self._qte_open_head, self._qte_open_head_ts = None, 0.0   # 时钟已消费, 下一条行重新计
+        self._qte_press_gated(dirs[0], 1, len(dirs), kind, dirs,
+                              via="newrow", stable_ok=True)
 
     def _qte_ghost_lone(self, d, kind, dirs, now):
         """v1.6.4 残行救回: 画面只剩一支孤箭时, 若它正好是"我们还欠游戏的那一支"
