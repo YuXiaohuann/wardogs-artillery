@@ -79,6 +79,13 @@ def virtual_screen():
     return (u.GetSystemMetrics(76), u.GetSystemMetrics(77),
             u.GetSystemMetrics(78), u.GetSystemMetrics(79))  # 虚拟屏(多显示器)原点与尺寸
 
+class MONITORINFO(ctypes.Structure):
+    """GetMonitorInfoW 用: 显示器物理/工作区矩形 (DPI 感知进程下为物理像素)。"""
+    _fields_ = (("cbSize", wt.DWORD),
+                ("rcMonitor", wt.RECT),
+                ("rcWork", wt.RECT),
+                ("dwFlags", wt.DWORD))
+
 class App:
     def __init__(self):
         self.cfg = core.load_config()
@@ -98,7 +105,7 @@ class App:
         self._qte_pressed, self._qte_empty = [], 0
         self._qte_hist = []
         self._qte_row = []
-        self._qte_prim, self._qte_warned = None, False
+        self._qte_prim, self._qte_prim_at, self._qte_warned = None, 0.0, False
         self._qte_last, self._qte_acted = [], False   # 上一帧画面 / 该帧是否已按
         self._qte_fast = 0.0                          # 按完后的快速重轮询截止时刻
         self._qte_act_ts = 0.0                        # 上次实际发键时刻 (补发计时用)
@@ -927,18 +934,97 @@ class App:
     # ------------------------------------------------------------ QTE 自动输入
     QTE_CN = {"up": "上", "down": "下", "left": "左", "right": "右"}
 
+    def _game_window_hwnd(self):
+        """动态找游戏窗口 HWND (0 = 没找到): 前台是游戏进程就直接用前台窗口;
+        否则枚举顶层可见且未最小化的窗口, 取进程名匹配 qte_game_exe 且面积最大者
+        (关掉 qte_gate / 游戏切到后台的样张联调场景也找得到)。"""
+        want = str(self.cfg.get("qte_game_exe",
+                                "WardogsClient-Win64-Shipping.exe")).lower()
+        u = ctypes.windll.user32
+        hwnd = u.GetForegroundWindow()
+        if hwnd:
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            key = (hwnd, pid.value)
+            name = self._fg_cache.get(key)
+            if name is None:
+                name = self._fg_name(pid.value)
+                if len(self._fg_cache) > 32:
+                    self._fg_cache.clear()
+                self._fg_cache[key] = name
+            if name == want:
+                return hwnd
+        found = []
+
+        @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        def _cb(h, _l):
+            if not u.IsWindowVisible(h) or u.IsIconic(h):
+                return True
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            key = (h, pid.value)
+            name = self._fg_cache.get(key)
+            if name is None:
+                name = self._fg_name(pid.value)
+                self._fg_cache[key] = name
+            if name != want:
+                return True
+            r = wt.RECT()
+            if u.GetWindowRect(h, ctypes.byref(r)):
+                area = (r.right - r.left) * (r.bottom - r.top)
+                if area > 0:
+                    found.append((area, h))
+            return True
+
+        try:
+            u.EnumWindows(_cb, 0)
+        except Exception:
+            pass
+        return max(found)[1] if found else 0
+
+    def _game_monitor_rect(self):
+        """游戏窗口所在显示器的物理像素矩形 (left, top, width, height);
+        没找到游戏窗口 / Win32 失败返回 None。"""
+        u = ctypes.windll.user32
+        hwnd = self._game_window_hwnd()
+        if not hwnd:
+            return None
+        r = wt.RECT()
+        if not u.GetWindowRect(hwnd, ctypes.byref(r)):
+            return None
+        mon = u.MonitorFromRect(ctypes.byref(r), 2)    # MONITOR_DEFAULTTONEAREST
+        if not mon:
+            return None
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if not u.GetMonitorInfoW(mon, ctypes.byref(mi)):
+            return None
+        rc = mi.rcMonitor
+        return (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+
     def _qte_full_region(self):
-        """QTE 的**全横带**截屏区: 主显示器中央一带 (仅作兜底全扫用)。
-        虚拟屏全带 (含副屏) 太宽, 纯浪费 CPU; QTE 箭行只出现在游戏画面中央一带。
-        v1.4: 常规轮询已不再用这里, 改用 _qte_zone_rect 学到的窄条带 (省 3 倍 CPU)。"""
-        if self._qte_prim is None:
+        """QTE 的**全横带**截屏区: 动态判定游戏窗口所在显示器, 取其中央一带
+        (仅作兜底全扫用)。虚拟屏全带 (含副屏) 太宽, 纯浪费 CPU; QTE 箭行只出现在
+        游戏画面中央一带。找不到游戏窗口时回退主显示器/虚拟屏。
+        v1.4: 常规轮询已不再用这里, 改用 _qte_zone_rect 学到的窄条带 (省 3 倍 CPU)。
+        v1.7: 显示器判定带 1 s 缓存 —— 游戏拖到另一块屏后自动跟上, 平时零开销。"""
+        now = time.time()
+        if self._qte_prim is None or now - getattr(self, "_qte_prim_at", 0.0) > 1.0:
+            m = None
             try:
-                import mss
-                with mss.mss() as sct:
-                    m = sct.monitors[1]          # mss 约定: [1] = 主显示器
-                self._qte_prim = (m["left"], m["top"], m["width"], m["height"])
+                m = self._game_monitor_rect()          # 游戏窗口所在显示器 (动态)
             except Exception:
-                self._qte_prim = virtual_screen()
+                m = None
+            if m is None:
+                try:
+                    import mss
+                    with mss.mss() as sct:
+                        d = sct.monitors[1]            # mss 约定: [1] = 主显示器
+                    m = (d["left"], d["top"], d["width"], d["height"])
+                except Exception:
+                    m = virtual_screen()
+            self._qte_prim = m
+            self._qte_prim_at = now
         x, y, w, h = self._qte_prim
         return (x + 0.12 * w, y + 0.30 * h, 0.76 * w, 0.55 * h)
 
